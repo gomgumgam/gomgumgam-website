@@ -95,6 +95,20 @@
         </div>
     </div>
 
+    <!-- X 인앱 브라우저에서 네트워크/API가 막힐 때만 표시 -->
+    <div id="inapp-helper" class="fixed left-4 right-4 bottom-5 z-[60] hidden font-sans">
+        <div class="mx-auto max-w-md rounded-2xl border border-black/10 bg-white px-4 py-4 shadow-2xl text-gray-800">
+            <div class="flex items-start gap-3">
+                <div class="mt-0.5 shrink-0 text-lg">↗</div>
+                <div class="min-w-0 flex-1">
+                    <p class="text-[13px] font-bold">X 앱에서는 불러오기가 막힐 수 있어요</p>
+                    <p class="mt-1 text-[12px] leading-relaxed text-gray-500">아래 버튼으로 같은 페이지를 외부 브라우저에서 다시 열면 가장 안정적으로 사용할 수 있어요.</p>
+                </div>
+                <button id="btn-open-external" class="shrink-0 rounded-full bg-gray-900 px-3 py-2 text-[11px] font-bold text-white">브라우저에서 열기</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 텍스트 드래그 시 하단 액션 바 -->
     <div id="selection-action-bar" class="fixed bottom-6 left-0 right-0 z-50 flex justify-center px-4 action-bar-hidden pointer-events-none">
         <div class="bg-gray-800 text-white px-5 py-3 rounded-2xl shadow-2xl font-sans flex items-center gap-4 pointer-events-auto border border-gray-700">
@@ -333,7 +347,19 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            
+
+            // X 앱의 인앱 브라우저는 일반 Chrome/Safari와 UA가 다르다.
+            // 2026년 기준 Android는 TwitterAndroid, iOS는 Twitter for iPhone 식별자가 주로 들어온다.
+            const isXInAppBrowser = /TwitterAndroid|Twitter\s+for\s+iPhone/i.test(navigator.userAgent || '');
+
+            // 일부 인앱/제한 환경에서 localStorage가 예외를 던져도 앱 전체가 죽지 않도록 방어한다.
+            const safeStorageGet = (key, fallback = null) => {
+                try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+            };
+            const safeStorageSet = (key, value) => {
+                try { localStorage.setItem(key, value); } catch {}
+            };
+
             const screens = { home: document.getElementById('screen-home'), book: document.getElementById('screen-book') };
             const btnSubmit = document.getElementById('btn-submit'), btnText = document.getElementById('btn-text'), btnSpinner = document.getElementById('btn-spinner'), urlInput = document.getElementById('url-input'), btnBack = document.getElementById('btn-back');
             const viewPage = document.getElementById('view-page'), viewScroll = document.getElementById('view-scroll'), pageText = document.getElementById('page-text'), scrollText = document.getElementById('scroll-text'), scrollMeta = document.getElementById('scroll-meta'), footerPagination = document.getElementById('footer-pagination');
@@ -343,7 +369,9 @@
             const settingsModal = document.getElementById('settings-modal'), btnsOpenSettings = document.querySelectorAll('.btn-open-settings'), btnCloseSettings = document.getElementById('btn-close-settings'), themeBtns = document.querySelectorAll('.theme-btn'), viewBtns = document.querySelectorAll('.view-btn'), appFontBtns = document.querySelectorAll('.app-font-btn');
             
             const toastContainer = document.getElementById('toast-container'), toastMessage = document.getElementById('toast-message');
-            
+            const inappHelper = document.getElementById('inapp-helper');
+            const btnOpenExternal = document.getElementById('btn-open-external');
+
             const actionBar = document.getElementById('selection-action-bar');
             const selectionCount = document.getElementById('selection-count');
             const btnOpenEditor = document.getElementById('btn-open-editor');
@@ -374,11 +402,11 @@
             let currentPageIndex = 0;
             let isAnimating = false;
             let currentOriginalUrl = "";
-            let activeTheme = localStorage.getItem('theme') || 'vintage';
-            let activeViewMode = localStorage.getItem('viewMode') || 'page';
+            let activeTheme = safeStorageGet('theme', 'vintage');
+            let activeViewMode = safeStorageGet('viewMode', 'page');
             
             // 글꼴 상태 저장 변수 추가
-            let activeAppFont = localStorage.getItem('appFont') || 'batang';
+            let activeAppFont = safeStorageGet('appFont', 'batang');
             
             let selectedTextForCapture = "";
             
@@ -401,6 +429,24 @@
                     toastContainer.classList.add('toast-hidden');
                 }, 3000);
             }
+
+            function showInAppHelper() {
+                if (!isXInAppBrowser || !inappHelper) return;
+                inappHelper.classList.remove('hidden');
+            }
+
+            function hideInAppHelper() {
+                if (inappHelper) inappHelper.classList.add('hidden');
+            }
+
+            // X 앱이 새 탭을 외부 브라우저로 위임할 수 있도록 target=_blank 방식으로 시도한다.
+            btnOpenExternal?.addEventListener('click', () => {
+                const samePageUrl = window.location.href;
+                const popup = window.open(samePageUrl, '_blank', 'noopener,noreferrer');
+                if (!popup) {
+                    showToast('X 앱의 메뉴에서 “브라우저에서 열기”를 선택해주세요.');
+                }
+            });
 
             function switchScreen(hideEl, showEl) {
                 hideEl.classList.remove('fade-in'); hideEl.classList.add('fade-out');
@@ -645,10 +691,26 @@
                 const API = 'https://api.fxtwitter.com/2';
                 const headers = { 'Accept': 'application/json' };
 
-                async function getJSON(endpoint) {
-                    const response = await fetch(`${API}${endpoint}`, { headers });
-                    if (!response.ok) return null;
-                    try { return await response.json(); } catch { return null; }
+                // X 인앱 브라우저에서도 요청이 무한 대기하지 않도록만 방어한다.
+                // 타래를 전부 가져오는 기존 API 호출 순서/페이지 수는 그대로 유지한다.
+                const API_TIMEOUT = isXInAppBrowser ? 12000 : 15000;
+
+                async function getJSON(endpoint, timeout = API_TIMEOUT) {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), timeout);
+                    try {
+                        const response = await fetch(`${API}${endpoint}`, {
+                            headers,
+                            signal: controller.signal
+                        });
+                        if (!response.ok) return null;
+                        try { return await response.json(); } catch { return null; }
+                    } catch (e) {
+                        console.warn('API request failed:', endpoint, e);
+                        return null;
+                    } finally {
+                        clearTimeout(timer);
+                    }
                 }
 
                 // 같은 타래의 상태만 안전하게 골라내기 위한 공통 검사
@@ -691,11 +753,11 @@
                     }
                 } catch (e) { console.warn('Status API failed:', e); }
 
-                // 3) conversation API를 여러 페이지 확인한다.
-                //    /thread가 일부만 반환하는 경우, 여기서 같은 작성자의 타래를 추가로 회수한다.
+                // 3) conversation API를 여러 페이지 끝까지 확인한다.
+                //    긴 타래도 잘리지 않도록 인앱이라고 페이지 수를 줄이지 않는다.
                 let conversationCursor = '';
                 const seenCursors = new Set();
-                const MAX_CONVERSATION_PAGES = 12;
+                const MAX_CONVERSATION_PAGES = 50;
 
                 for (let page = 0; page < MAX_CONVERSATION_PAGES; page++) {
                     try {
@@ -836,7 +898,7 @@
             function applyTheme(theme) {
                 activeTheme = theme;
                 document.documentElement.setAttribute('data-theme', theme);
-                localStorage.setItem('theme', theme);
+                safeStorageSet('theme', theme);
                 themeBtns.forEach(btn => {
                     if(btn.dataset.value === theme) {
                         btn.classList.add('ring-2', 'ring-offset-2', 'ring-book-accent', 'scale-105');
@@ -851,7 +913,7 @@
             // 본문 글꼴 적용 함수 추가
             function applyAppFont(font) {
                 activeAppFont = font;
-                localStorage.setItem('appFont', font);
+                safeStorageSet('appFont', font);
 
                 const targetElements = [document.getElementById('page-text'), document.getElementById('scroll-text')];
                 
@@ -877,7 +939,7 @@
 
             function applyViewMode(mode) {
                 activeViewMode = mode;
-                localStorage.setItem('viewMode', mode);
+                safeStorageSet('viewMode', mode);
                 viewBtns.forEach(btn => {
                     if(btn.dataset.value === mode) {
                         btn.classList.add('bg-book-accent', 'text-book-bg');
@@ -948,6 +1010,7 @@
                     
                     currentPageIndex = 0;
                     applyViewMode(activeViewMode);
+                    hideInAppHelper();
                     switchScreen(screens.home, screens.book);
                     
                     if(activeViewMode === 'page') {
@@ -959,6 +1022,7 @@
                     else if (error.message === 'INVALID_URL' || error.message === 'INVALID_X_LINK') showToast("X 게시물 링크 형식을 확인해주세요.");
                     else if (error.message === 'NO_CONTENT') showToast("이 게시물의 내용을 가져올 수 없습니다.");
                     else showToast("X에서 글을 가져오지 못했습니다. 잠시 후 다시 시도해주세요.");
+                    showInAppHelper();
                 } finally {
                     btnText.innerHTML = "책 열기 &rarr;";
                     btnSpinner.classList.add('hidden');
