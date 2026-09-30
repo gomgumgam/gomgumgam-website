@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="vintage">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>X 글을 책처럼 읽기</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Nanum+Myeongjo:wght@400;700&family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'serif': ['"Gowun Batang"', 'serif'],
+                        'myeongjo': ['"Nanum Myeongjo"', 'serif'],
+                        'sans': ['"Noto Sans KR"', 'sans-serif'],
+                    },
+                    colors: {
+                        book: {
+                            bg: 'var(--bg-color)', text: 'var(--text-color)', muted: 'var(--muted-color)',
+                            accent: 'var(--accent-color)', border: 'var(--border-color)',
+                        }
+                    },
+                    boxShadow: {
+                        'book-inner': 'inset 0 0 80px rgba(100, 80, 60, 0.03)',
+                        'book-outer': '0 20px 40px -10px rgba(0,0,0,0.1), 0 0 20px rgba(0,0,0,0.05)',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        :root {
+            --bg-color: #f9f6f0; --text-color: #3d3329; --muted-color: #8a7d70; --accent-color: #2a221b; --border-color: #e0d5be;
+        }
+        html[data-theme="light"] {
+            --bg-color: #ffffff; --text-color: #111827; --muted-color: #6b7280; --accent-color: #000000; --border-color: #e5e7eb;
+        }
+        html[data-theme="dark"] {
+            --bg-color: #374151; --text-color: #f9fafb; --muted-color: #9ca3af; --accent-color: #ffffff; --border-color: #4b5563;
+        }
+
+        body { overscroll-behavior-y: none; background-color: #d1d5db; transition: background-color 0.3s; }
+        html[data-theme="light"] body { background-color: #ffffff; }
+        html[data-theme="dark"] body { background-color: #111827; }
+
+        .paper-texture {
+            position: absolute; inset: 0; pointer-events: none; opacity: 0.3;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            mix-blend-mode: multiply; z-index: 1; transition: opacity 0.3s;
+        }
+        html[data-theme="light"] .paper-texture, html[data-theme="dark"] .paper-texture { display: none; }
+
+        .fade-transition { transition: opacity 0.4s ease-in-out, transform 0.4s ease-in-out; }
+        .fade-out { opacity: 0; pointer-events: none; transform: translateY(10px); }
+        .fade-in { opacity: 1; pointer-events: auto; transform: translateY(0); }
+
+        #toast-container { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s; }
+        .toast-hidden { transform: translateY(-150%); opacity: 0; }
+        .toast-visible { transform: translateY(0); opacity: 1; }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner { border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; width: 1.2rem; height: 1.2rem; animation: spin 0.8s linear infinite; }
+
+        #selection-action-bar { transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .action-bar-hidden { transform: translateY(150%); }
+        .action-bar-visible { transform: translateY(0); }
+        ::selection { background: var(--border-color); color: var(--text-color); }
+
+        .toggle-checkbox:checked { right: 0; border-color: #68D391; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #68D391; }
+        
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #ffffff; cursor: pointer; margin-top: -6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 6px; cursor: pointer; background: #4a5568; border-radius: 9999px; }
+    </style>
+</head>
+
+<body class="flex items-center justify-center min-h-screen font-serif text-book-text selection:bg-book-border">
+
+    <div id="toast-container" class="fixed top-5 left-0 right-0 z-50 flex justify-center px-4 toast-hidden pointer-events-none">
+        <div class="bg-book-accent text-book-bg px-6 py-3 rounded-full shadow-lg text-sm font-sans flex items-center gap-2">
+            <i class="ph-fill ph-info text-lg"></i>
+            <span id="toast-message">알림 메시지</span>
+        </div>
+    </div>
+
+    <!-- 텍스트 드래그 시 하단 액션 바 -->
+    <div id="selection-action-bar" class="fixed bottom-6 left-0 right-0 z-50 flex justify-center px-4 action-bar-hidden pointer-events-none">
+        <div class="bg-gray-800 text-white px-5 py-3 rounded-2xl shadow-2xl font-sans flex items-center gap-4 pointer-events-auto border border-gray-700">
+            <div class="flex flex-col">
+                <span id="selection-count" class="text-xs text-gray-400 font-bold tracking-widest">0자 선택됨</span>
+            </div>
+            <div class="w-[1px] h-6 bg-gray-600"></div>
+            <button id="btn-open-editor" class="flex items-center gap-2 text-sm font-bold text-white hover:text-blue-300 transition-colors">
+                <i class="ph ph-camera text-lg"></i>
+                이미지로 저장
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 문장 저장 에디터 모달 -->
+    <!-- ========================================== -->
+    <div id="editor-modal" class="fixed inset-0 h-[100dvh] z-50 bg-[#121212] hidden flex-col fade-transition fade-out overflow-hidden font-sans">
+        
+        <header class="flex items-center justify-between px-5 py-4 text-white z-20 shrink-0 bg-[#121212] shadow-sm">
+            <button id="btn-close-editor" class="p-2 hover:bg-white/10 rounded-full transition-colors -ml-2"><i class="ph ph-x text-2xl"></i></button>
+            <h2 class="text-[15px] font-bold tracking-widest">문장 저장</h2>
+            <button id="btn-execute-capture" class="px-5 py-2 bg-white text-black text-[13px] font-bold rounded-full hover:bg-gray-200 transition-colors">저장</button>
+        </header>
+
+        <div class="flex-1 overflow-y-auto w-full pb-32" style="-webkit-overflow-scrolling: touch;">
+            
+            <div class="w-full flex justify-center bg-[#0a0a0a] py-6 shrink-0 border-b border-white/5">
+                <div class="shadow-2xl mx-auto">
+                    <!-- 캡처 타겟 (완벽한 직각 정사각형) -->
+                    <div id="capture-target" class="relative w-[300px] sm:w-[340px] aspect-square flex flex-col p-7 overflow-hidden transition-all duration-300 bg-[#2d3748]">
+                        <div id="capture-bg-layer" class="absolute inset-0 bg-cover bg-center transition-all duration-300"></div>
+                        <div id="preview-dim-overlay" class="absolute inset-0 bg-black/60 transition-opacity duration-300 opacity-0 pointer-events-none"></div>
+                        
+                        <div class="relative z-10 flex flex-col h-full w-full">
+                            <!-- 텍스트 영역 (행간 1.6 유지) -->
+                            <div class="flex-1 flex flex-col justify-center">
+                                <p id="preview-quote-text" class="text-[12px] leading-[1.6] font-serif break-keep whitespace-pre-line text-white text-left transition-all duration-300 drop-shadow-md w-full"></p>
+                            </div>
+                            
+                            <!-- 하단 출처 정보 (아이디/링크 크기 더 축소) -->
+                            <div id="preview-meta-box" class="mt-4 pt-3 border-t border-white/20 text-white/70 font-sans transition-all duration-300 text-left shrink-0">
+                                <p id="preview-meta-author" class="text-[9px] font-bold tracking-widest mb-0.5"></p>
+                                <p id="preview-meta-link" class="text-[7px] opacity-60 tracking-wider break-all leading-relaxed"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="w-full max-w-[400px] mx-auto p-5 space-y-6 text-white shrink-0 mt-2">
+                <input type="file" id="image-upload" accept="image/*" class="hidden">
+
+                <div class="space-y-3">
+                    <div class="flex items-center justify-between">
+                        <p class="text-[12px] font-bold text-gray-400 tracking-wider">배경</p>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <span class="text-[11px] text-gray-400 font-bold">배경 어둡게</span>
+                            <div class="relative inline-block w-9 align-middle select-none transition duration-200 ease-in">
+                                <input type="checkbox" id="dim-toggle" class="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-[2px] border-gray-600 appearance-none cursor-pointer z-10"/>
+                                <label for="dim-toggle" class="toggle-label block overflow-hidden h-4 rounded-full bg-gray-600 cursor-pointer"></label>
+                            </div>
+                        </label>
+                    </div>
+                    <div class="flex gap-2.5 overflow-x-auto hide-scrollbar py-1">
+                        <button class="bg-btn w-11 h-11 shrink-0 rounded-xl border border-gray-600 flex items-center justify-center hover:bg-gray-800 transition-colors" data-type="upload">
+                            <i class="ph ph-image text-xl text-gray-400"></i>
+                        </button>
+                        <button class="bg-btn w-11 h-11 shrink-0 rounded-xl bg-[#2d3748] ring-2 ring-white ring-offset-2 ring-offset-[#121212]" data-bg="bg-[#2d3748]"></button>
+                        <button class="bg-btn w-11 h-11 shrink-0 rounded-xl bg-[#5E4D44]" data-bg="bg-[#5E4D44]"></button>
+                        <button class="bg-btn w-11 h-11 shrink-0 rounded-xl bg-[#1e293b]" data-bg="bg-[#1e293b]"></button>
+                        <button class="bg-btn w-11 h-11 shrink-0 rounded-xl bg-[#f9f6f0]" data-bg="bg-[#f9f6f0]"></button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="space-y-2">
+                        <p class="text-[12px] font-bold text-gray-400 tracking-wider">글꼴</p>
+                        <div class="flex bg-gray-800/60 p-1 rounded-lg">
+                            <button class="font-btn flex-1 py-1.5 rounded-md text-[12px] font-sans text-gray-400" data-font="font-sans">고딕</button>
+                            <button class="font-btn flex-1 py-1.5 rounded-md text-[12px] font-serif bg-gray-600 text-white shadow-sm" data-font="font-serif">바탕</button>
+                            <button class="font-btn flex-1 py-1.5 rounded-md text-[12px] font-myeongjo text-gray-400" data-font="font-myeongjo">명조</button>
+                        </div>
+                    </div>
+                    <div class="space-y-2">
+                        <p class="text-[12px] font-bold text-gray-400 tracking-wider">정렬</p>
+                        <div class="flex bg-gray-800/60 p-1 rounded-lg">
+                            <button class="align-btn flex-1 py-1.5 rounded-md text-white bg-gray-600 shadow-sm flex justify-center" data-align="text-left"><i class="ph ph-text-align-left text-base"></i></button>
+                            <button class="align-btn flex-1 py-1.5 rounded-md text-gray-400 flex justify-center" data-align="text-center"><i class="ph ph-text-align-center text-base"></i></button>
+                            <button class="align-btn flex-1 py-1.5 rounded-md text-gray-400 flex justify-center" data-align="text-right"><i class="ph ph-text-align-right text-base"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-[1fr_auto] gap-6 pt-2 items-center">
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center">
+                            <p class="text-[12px] font-bold text-gray-400 tracking-wider">글자 크기</p>
+                            <span id="text-size-display" class="text-xs font-bold text-gray-300">12px</span>
+                        </div>
+                        <input type="range" id="size-slider" min="10" max="24" value="12" class="w-full">
+                    </div>
+
+                    <div class="space-y-2">
+                        <p class="text-[12px] font-bold text-gray-400 tracking-wider text-center">테마색</p>
+                        <div class="flex gap-2">
+                            <button class="color-btn w-8 h-8 rounded-full border border-gray-600 bg-white text-black font-bold text-[11px] ring-2 ring-white ring-offset-2 ring-offset-[#121212]" data-color="text-white" data-meta="text-white/70" data-border="border-white/20">A</button>
+                            <button class="color-btn w-8 h-8 rounded-full border border-gray-600 bg-[#1a1a1a] text-white font-bold text-[11px] opacity-50" data-color="text-[#1a1a1a]" data-meta="text-[#1a1a1a]/70" data-border="border-[#1a1a1a]/30">A</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- 메인 앱 컨테이너 -->
+    <!-- ========================================== -->
+    <div id="app-container" class="relative w-full max-w-md h-[100dvh] sm:h-[800px] sm:max-h-[90vh] sm:rounded-md sm:shadow-book-outer bg-book-bg shadow-book-inner overflow-hidden flex flex-col transition-colors duration-500">
+        
+        <div class="paper-texture"></div>
+
+        <main id="screen-home" class="absolute inset-0 z-10 flex flex-col items-center justify-center p-8 fade-transition fade-in">
+            <button class="btn-open-settings absolute top-6 right-6 p-2 text-book-muted hover:text-book-accent transition-colors z-20">
+                <i class="ph ph-sliders-horizontal text-2xl"></i>
+            </button>
+
+            <div class="w-full flex flex-col items-center justify-center space-y-12 mt-[-10%] z-20">
+                <div class="text-center space-y-6">
+                    <h1 class="text-[32px] font-bold tracking-widest text-book-accent leading-snug">X 글을<br>책처럼 읽기</h1>
+                    <div class="flex items-center justify-center gap-4 text-book-muted">
+                        <span class="w-8 h-[1px] bg-current opacity-40"></span>
+                        <i class="ph-fill ph-star-four text-sm opacity-60"></i>
+                        <span class="w-8 h-[1px] bg-current opacity-40"></span>
+                    </div>
+                    <p class="text-[15px] text-book-muted leading-loose tracking-wider">트위터의 한 순간을<br>한 권의 책처럼.</p>
+                </div>
+
+                <div class="w-full space-y-5 max-w-[280px]">
+                    <div class="relative w-full">
+                        <div class="absolute inset-y-0 left-0 pl-5 flex items-center justify-center pointer-events-none text-book-muted"><i class="ph ph-link text-lg"></i></div>
+                        <input type="url" id="url-input" placeholder="X 링크를 붙여넣어 주세요." class="w-full pl-12 pr-5 py-4 rounded-full bg-transparent border border-book-border placeholder-book-muted focus:outline-none focus:border-book-accent transition-all text-[15px] font-sans text-center tracking-wide" autocomplete="off">
+                    </div>
+                    <button id="btn-submit" class="w-full bg-book-accent text-book-bg py-4 rounded-full text-[15px] tracking-widest hover:opacity-90 transition-opacity active:scale-[0.98] flex items-center justify-center gap-2 shadow-sm h-[56px] font-bold">
+                        <span id="btn-text">책 열기 &rarr;</span>
+                        <div id="btn-spinner" class="spinner hidden"></div>
+                    </button>
+                </div>
+            </div>
+        </main>
+
+        <main id="screen-book" class="absolute inset-0 z-20 flex flex-col fade-transition fade-out hidden">
+            <div id="swipe-hint" class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 transition-opacity duration-1000 opacity-0">
+                <div class="text-center text-[12px] text-book-muted opacity-40 tracking-widest leading-loose">
+                    화면 좌우를 터치하여 넘기기<br>(텍스트를 길게 눌러 문장 수집)
+                </div>
+            </div>
+
+            <header class="flex items-center justify-between px-5 pt-6 pb-2 z-30 shrink-0">
+                <button id="btn-back" class="p-2 text-book-muted hover:text-book-accent transition-colors"><i class="ph ph-caret-left text-2xl"></i></button>
+                <div class="flex flex-col items-center">
+                    <div class="flex items-center gap-3 text-book-muted">
+                        <span class="w-4 h-[1px] bg-current opacity-40"></span>
+                        <span id="book-title" class="text-sm tracking-[0.2em] font-bold truncate max-w-[150px]">오늘도, 너에게</span>
+                        <span class="w-4 h-[1px] bg-current opacity-40"></span>
+                    </div>
+                </div>
+                <button class="btn-open-settings p-2 text-book-muted hover:text-book-accent transition-colors z-20"><i class="ph ph-sliders-horizontal text-2xl"></i></button>
+            </header>
+
+            <div class="flex-1 relative w-full z-20 overflow-hidden flex flex-col justify-center" id="reading-area">
+                <div id="view-page" class="w-full h-full px-6 transition-opacity duration-300">
+                    <div class="h-full w-full overflow-y-auto hide-scrollbar flex flex-col pb-4">
+                        <div class="min-h-full flex flex-col justify-center">
+                            <p id="page-text" class="text-[15px] leading-[1.6] whitespace-pre-line break-keep tracking-wide text-left w-full mx-auto my-auto py-2"></p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="view-scroll" class="absolute inset-0 hidden overflow-y-auto px-8 pt-4 pb-20 hide-scrollbar transition-opacity duration-300">
+                    <div class="w-full max-w-md mx-auto flex flex-col">
+                        <p id="scroll-text" class="text-[15px] leading-[1.6] whitespace-pre-line break-keep tracking-wide text-left mb-12"></p>
+                        <div id="scroll-meta" class="mt-auto pb-10"></div>
+                    </div>
+                </div>
+            </div>
+
+            <footer id="footer-pagination" class="px-6 pb-6 pt-2 flex items-center justify-between z-30 relative transition-opacity duration-300 shrink-0">
+                <button id="btn-prev" class="w-12 h-12 rounded-full flex items-center justify-center text-book-muted hover:bg-black/5 transition-colors disabled:opacity-20"><i class="ph ph-caret-left text-xl"></i></button>
+                <span id="page-indicator" class="text-sm text-book-muted tracking-[0.2em]">1 / 1</span>
+                <button id="btn-next" class="w-12 h-12 rounded-full flex items-center justify-center text-book-muted hover:bg-black/5 transition-colors disabled:opacity-20"><i class="ph ph-caret-right text-xl"></i></button>
+            </footer>
+        </main>
+        
+        <div id="settings-modal" class="absolute inset-0 z-50 bg-black/60 hidden flex-col items-center justify-end sm:justify-center fade-transition fade-out">
+            <div class="bg-book-bg text-book-text w-full sm:max-w-[360px] rounded-t-3xl sm:rounded-2xl p-7 shadow-2xl transition-colors duration-500 transform translate-y-0">
+                <div class="flex justify-between items-center mb-8">
+                    <h2 class="text-lg font-bold tracking-widest text-book-accent">앱 설정</h2>
+                    <button id="btn-close-settings" class="text-book-muted hover:text-book-accent"><i class="ph ph-x text-2xl"></i></button>
+                </div>
+                <div class="space-y-8 font-sans">
+                    <div>
+                        <p class="text-[13px] text-book-muted mb-3 tracking-widest font-bold">배경 색상</p>
+                        <div class="flex gap-2">
+                            <button class="theme-btn flex-1 py-3 border border-book-border rounded-xl bg-[#f9f6f0] text-[#3d3329] font-bold text-sm transition-all" data-value="vintage">빈티지</button>
+                            <button class="theme-btn flex-1 py-3 border border-book-border rounded-xl bg-[#ffffff] text-[#111827] font-bold text-sm transition-all" data-value="light">라이트</button>
+                            <button class="theme-btn flex-1 py-3 border border-book-border rounded-xl bg-[#374151] text-[#f9fafb] font-bold text-sm transition-all" data-value="dark">다크</button>
+                        </div>
+                    </div>
+                    
+                    <!-- ====== 추가된 본문 글꼴 영역 ====== -->
+                    <div>
+                        <p class="text-[13px] text-book-muted mb-3 tracking-widest font-bold">본문 글꼴</p>
+                        <div class="flex gap-2">
+                            <button class="app-font-btn flex-1 py-3 border border-book-border rounded-xl font-sans text-[13px] transition-all" data-value="gothic">고딕</button>
+                            <button class="app-font-btn flex-1 py-3 border border-book-border rounded-xl font-serif text-[13px] transition-all" data-value="batang">바탕</button>
+                            <button class="app-font-btn flex-1 py-3 border border-book-border rounded-xl font-myeongjo text-[13px] transition-all" data-value="myeongjo">명조</button>
+                            <button class="app-font-btn flex-1 py-3 border border-book-border rounded-xl font-sans font-bold text-[13px] transition-all" data-value="bold-gothic">굵은고딕</button>
+                        </div>
+                    </div>
+                    <!-- ================================== -->
+
+                    <div>
+                        <p class="text-[13px] text-book-muted mb-3 tracking-widest font-bold">읽기 모드</p>
+                        <div class="flex gap-2">
+                            <button class="view-btn flex-1 py-3 border border-book-border rounded-xl font-bold text-sm flex flex-col items-center gap-1 transition-all" data-value="page"><i class="ph ph-book-open text-xl"></i>페이지</button>
+                            <button class="view-btn flex-1 py-3 border border-book-border rounded-xl font-bold text-sm flex flex-col items-center gap-1 transition-all" data-value="scroll"><i class="ph ph-arrows-out-line-vertical text-xl"></i>스크롤</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            
+            const screens = { home: document.getElementById('screen-home'), book: document.getElementById('screen-book') };
+            const btnSubmit = document.getElementById('btn-submit'), btnText = document.getElementById('btn-text'), btnSpinner = document.getElementById('btn-spinner'), urlInput = document.getElementById('url-input'), btnBack = document.getElementById('btn-back');
+            const viewPage = document.getElementById('view-page'), viewScroll = document.getElementById('view-scroll'), pageText = document.getElementById('page-text'), scrollText = document.getElementById('scroll-text'), scrollMeta = document.getElementById('scroll-meta'), footerPagination = document.getElementById('footer-pagination');
+            const btnPrev = document.getElementById('btn-prev'), btnNext = document.getElementById('btn-next'), pageIndicator = document.getElementById('page-indicator'), bookTitle = document.getElementById('book-title'), swipeHint = document.getElementById('swipe-hint');
+            
+            // 기존 변수에 app-font-btn 추가
+            const settingsModal = document.getElementById('settings-modal'), btnsOpenSettings = document.querySelectorAll('.btn-open-settings'), btnCloseSettings = document.getElementById('btn-close-settings'), themeBtns = document.querySelectorAll('.theme-btn'), viewBtns = document.querySelectorAll('.view-btn'), appFontBtns = document.querySelectorAll('.app-font-btn');
+            
+            const toastContainer = document.getElementById('toast-container'), toastMessage = document.getElementById('toast-message');
+            
+            const actionBar = document.getElementById('selection-action-bar');
+            const selectionCount = document.getElementById('selection-count');
+            const btnOpenEditor = document.getElementById('btn-open-editor');
+            
+            const editorModal = document.getElementById('editor-modal');
+            const btnCloseEditor = document.getElementById('btn-close-editor');
+            const btnExecuteCapture = document.getElementById('btn-execute-capture');
+            const captureTarget = document.getElementById('capture-target');
+            const captureBgLayer = document.getElementById('capture-bg-layer');
+            const previewDimOverlay = document.getElementById('preview-dim-overlay');
+            const previewQuoteText = document.getElementById('preview-quote-text');
+            const previewMetaAuthor = document.getElementById('preview-meta-author');
+            const previewMetaLink = document.getElementById('preview-meta-link');
+            const previewMetaBox = document.getElementById('preview-meta-box');
+            
+            const bgBtns = document.querySelectorAll('.bg-btn');
+            const imageUpload = document.getElementById('image-upload');
+            const fontBtns = document.querySelectorAll('.font-btn');
+            const alignBtns = document.querySelectorAll('.align-btn');
+            const colorBtns = document.querySelectorAll('.color-btn');
+            const sizeSlider = document.getElementById('size-slider');
+            const textSizeDisplay = document.getElementById('text-size-display');
+            const dimToggle = document.getElementById('dim-toggle');
+
+            let currentPages = [];
+            let currentRawText = "";
+            let currentMetaData = null;
+            let currentPageIndex = 0;
+            let isAnimating = false;
+            let currentOriginalUrl = "";
+            let activeTheme = localStorage.getItem('theme') || 'vintage';
+            let activeViewMode = localStorage.getItem('viewMode') || 'page';
+            
+            // 글꼴 상태 저장 변수 추가
+            let activeAppFont = localStorage.getItem('appFont') || 'batang';
+            
+            let selectedTextForCapture = "";
+            
+            let editorState = {
+                bgClass: 'bg-[#2d3748]', fontClass: 'font-serif', alignClass: 'text-left', colorClass: 'text-white',
+                metaClass: 'text-white/70', borderClass: 'border-white/20', size: 12
+            };
+
+            applyTheme(activeTheme);
+            applyViewMode(activeViewMode);
+            // 글꼴 적용 초기화 추가
+            applyAppFont(activeAppFont);
+
+            function showToast(message) {
+                toastMessage.textContent = message;
+                toastContainer.classList.remove('toast-hidden');
+                toastContainer.classList.add('toast-visible');
+                setTimeout(() => {
+                    toastContainer.classList.remove('toast-visible');
+                    toastContainer.classList.add('toast-hidden');
+                }, 3000);
+            }
+
+            function switchScreen(hideEl, showEl) {
+                hideEl.classList.remove('fade-in'); hideEl.classList.add('fade-out');
+                setTimeout(() => {
+                    hideEl.classList.add('hidden'); showEl.classList.remove('hidden');
+                    void showEl.offsetWidth;
+                    showEl.classList.remove('fade-out'); showEl.classList.add('fade-in');
+                }, 400); 
+            }
+
+            function formatDate(epochStr) {
+                if (!epochStr) return "";
+                const date = new Date(epochStr * 1000);
+                return `${date.getFullYear()}. ${String(date.getMonth() + 1).padStart(2, '0')}. ${String(date.getDate()).padStart(2, '0')}.`;
+            }
+
+            function paginateText(text) {
+                const maxChars = 700; 
+                const maxLines = 28;  
+                const charsPerLine = 22; 
+
+                const pages = [];
+                let cleanText = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+                const paragraphs = cleanText.split('\n\n');
+
+                let currentPage = "";
+                let currentChars = 0;
+                let currentLines = 0;
+
+                for (let i = 0; i < paragraphs.length; i++) {
+                    let p = paragraphs[i].trim();
+                    if (!p) continue;
+
+                    let explicitLines = p.split('\n');
+                    let pLines = 0;
+                    for(let line of explicitLines) {
+                        pLines += Math.ceil((line.length || 1) / charsPerLine);
+                    }
+                    pLines += 1; 
+
+                    if (currentPage.length > 0 && ((currentChars + p.length > maxChars) || (currentLines + pLines > maxLines))) {
+                        pages.push(currentPage.trim());
+                        currentPage = p + '\n\n';
+                        currentChars = p.length;
+                        currentLines = pLines;
+                    } else {
+                        currentPage += p + '\n\n';
+                        currentChars += p.length;
+                        currentLines += pLines;
+                    }
+                }
+                
+                if (currentPage.trim().length > 0) pages.push(currentPage.trim());
+                return pages;
+            }
+
+            document.addEventListener('copy', (e) => {
+                const selection = window.getSelection().toString();
+                if (selection.length > 200) {
+                    e.preventDefault();
+                    const truncated = selection.substring(0, 200) + '...\n\n[글자 수 제한으로 200자까지만 복사되었습니다.]';
+                    if (e.clipboardData) e.clipboardData.setData('text/plain', truncated);
+                    else if (window.clipboardData) window.clipboardData.setData('Text', truncated);
+                    showToast("한 번에 200자까지만 복사할 수 있습니다.");
+                }
+            });
+
+            document.addEventListener('selectionchange', () => {
+                const text = window.getSelection().toString().trim();
+                if (text.length > 0 && screens.book.classList.contains('fade-in')) {
+                    selectionCount.textContent = `${text.length}자 선택됨`;
+                    actionBar.classList.remove('action-bar-hidden');
+                    actionBar.classList.add('action-bar-visible');
+                    selectedTextForCapture = text.length > 200 ? text.substring(0, 200) + '...' : text;
+                } else {
+                    actionBar.classList.remove('action-bar-visible');
+                    actionBar.classList.add('action-bar-hidden');
+                }
+            });
+
+            btnOpenEditor.addEventListener('click', () => {
+                if(!selectedTextForCapture) return;
+                
+                previewQuoteText.innerHTML = selectedTextForCapture.replace(/\n/g, '<br>');
+                previewMetaAuthor.textContent = `${currentMetaData.user_name} | @${currentMetaData.user_screen_name}`;
+                previewMetaLink.textContent = currentOriginalUrl;
+                
+                editorModal.classList.remove('hidden');
+                void editorModal.offsetWidth;
+                editorModal.classList.remove('fade-out');
+                editorModal.classList.add('fade-in');
+            });
+
+            btnCloseEditor.addEventListener('click', () => {
+                editorModal.classList.remove('fade-in');
+                editorModal.classList.add('fade-out');
+                setTimeout(() => editorModal.classList.add('hidden'), 400);
+            });
+
+            bgBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if(btn.dataset.type === 'upload') {
+                        imageUpload.click();
+                    } else {
+                        captureBgLayer.style.backgroundImage = 'none';
+                        captureBgLayer.className = `absolute inset-0 bg-cover bg-center transition-all duration-300 ${btn.dataset.bg}`;
+                        editorState.bgClass = btn.dataset.bg;
+                        
+                        bgBtns.forEach(b => b.classList.remove('ring-2', 'ring-white', 'ring-offset-2', 'ring-offset-[#121212]'));
+                        btn.classList.add('ring-2', 'ring-white', 'ring-offset-2', 'ring-offset-[#121212]');
+                    }
+                });
+            });
+
+            imageUpload.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if(file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        captureBgLayer.style.backgroundImage = `url('${e.target.result}')`;
+                        bgBtns.forEach(b => b.classList.remove('ring-2', 'ring-white', 'ring-offset-2', 'ring-offset-[#121212]'));
+                        bgBtns[0].classList.add('ring-2', 'ring-white', 'ring-offset-2', 'ring-offset-[#121212]');
+                        
+                        dimToggle.checked = true;
+                        previewDimOverlay.classList.remove('opacity-0');
+                    };
+                    reader.readAsDataURL(file);
+                }
+                e.target.value = '';
+            });
+
+            fontBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    previewQuoteText.classList.remove(editorState.fontClass);
+                    editorState.fontClass = btn.dataset.font;
+                    previewQuoteText.classList.add(editorState.fontClass);
+                    
+                    fontBtns.forEach(b => {
+                        b.classList.remove('bg-gray-600', 'text-white', 'shadow-sm');
+                        b.classList.add('text-gray-400');
+                    });
+                    btn.classList.remove('text-gray-400');
+                    btn.classList.add('bg-gray-600', 'text-white', 'shadow-sm');
+                });
+            });
+
+            alignBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    previewQuoteText.classList.remove(editorState.alignClass);
+                    previewMetaBox.classList.remove(editorState.alignClass);
+                    
+                    editorState.alignClass = btn.dataset.align;
+                    previewQuoteText.classList.add(editorState.alignClass);
+                    previewMetaBox.classList.add(editorState.alignClass);
+                    
+                    alignBtns.forEach(b => {
+                        b.classList.remove('bg-gray-600', 'text-white', 'shadow-sm');
+                        b.classList.add('text-gray-400');
+                    });
+                    btn.classList.remove('text-gray-400');
+                    btn.classList.add('bg-gray-600', 'text-white', 'shadow-sm');
+                });
+            });
+
+            colorBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    previewQuoteText.classList.remove(editorState.colorClass);
+                    previewMetaBox.classList.remove(editorState.metaClass);
+                    previewMetaBox.classList.remove(editorState.borderClass);
+                    
+                    editorState.colorClass = btn.dataset.color;
+                    editorState.metaClass = btn.dataset.meta;
+                    editorState.borderClass = btn.dataset.border;
+                    
+                    previewQuoteText.classList.add(editorState.colorClass);
+                    previewMetaBox.classList.add(editorState.metaClass);
+                    previewMetaBox.classList.add(editorState.borderClass);
+                    
+                    colorBtns.forEach(b => {
+                        b.classList.remove('ring-2', 'ring-white', 'ring-offset-2', 'ring-offset-[#121212]');
+                        b.classList.add('opacity-50');
+                    });
+                    btn.classList.remove('opacity-50');
+                    btn.classList.add('ring-2', 'ring-white', 'ring-offset-2', 'ring-offset-[#121212]');
+                });
+            });
+
+            sizeSlider.addEventListener('input', (e) => {
+                editorState.size = e.target.value;
+                previewQuoteText.style.fontSize = `${editorState.size}px`;
+                textSizeDisplay.textContent = `${editorState.size}px`;
+            });
+
+            dimToggle.addEventListener('change', (e) => {
+                if(e.target.checked) previewDimOverlay.classList.remove('opacity-0');
+                else previewDimOverlay.classList.add('opacity-0');
+            });
+
+            btnExecuteCapture.addEventListener('click', async () => {
+                showToast("이미지를 저장하는 중...");
+                btnExecuteCapture.disabled = true;
+                btnExecuteCapture.textContent = "저장 중...";
+                
+                try {
+                    const canvas = await html2canvas(captureTarget, {
+                        scale: 3, 
+                        useCORS: true,
+                        backgroundColor: null 
+                    });
+                    
+                    const link = document.createElement('a');
+                    link.download = `문장수집_${currentMetaData.user_screen_name}.png`;
+                    link.href = canvas.toDataURL('image/png');
+                    link.click();
+                    
+                    showToast("갤러리에 저장되었습니다.");
+                    btnCloseEditor.click();
+                } catch (e) {
+                    console.error("Capture Error:", e);
+                    showToast("이미지 저장에 실패했습니다.");
+                } finally {
+                    btnExecuteCapture.disabled = false;
+                    btnExecuteCapture.textContent = "저장";
+                    window.getSelection().removeAllRanges(); 
+                }
+            });
+
+            // ==========================================
+            // 통신 및 화면 렌더링
+            // ==========================================
+            async function fetchTwitterData(urlStr) {
+                let url;
+                try { url = new URL(urlStr.trim()); } catch { throw new Error('INVALID_URL'); }
+
+                const hostname = url.hostname.toLowerCase();
+                if (!['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'].includes(hostname)) throw new Error('NOT_TWITTER');
+
+                const match = url.pathname.match(/(?:^|\/)status\/(\d+)/);
+                if (!match) throw new Error('INVALID_X_LINK');
+                const tweetId = match[1];
+
+                const API = 'https://api.fxtwitter.com/2';
+                const headers = { 'Accept': 'application/json' };
+
+                async function getJSON(endpoint) {
+                    const response = await fetch(`${API}${endpoint}`, { headers });
+                    if (!response.ok) return null;
+                    try { return await response.json(); } catch { return null; }
+                }
+
+                // 같은 타래의 상태만 안전하게 골라내기 위한 공통 검사
+                function isStatus(t) {
+                    return !!(t && t.type !== 'tombstone' && t.type !== 'thread' && t.text && t.id);
+                }
+
+                // 여러 API 응답에서 얻은 게시물을 ID 기준으로 합친다.
+                const posts = new Map();
+                const addPosts = (items) => {
+                    if (!Array.isArray(items)) return;
+                    for (const t of items) {
+                        if (isStatus(t)) posts.set(String(t.id), t);
+                    }
+                };
+
+                let rootStatus = null;
+                let rootAuthor = null;
+
+                // 1) 가장 정확한 self-thread API를 먼저 가져온다.
+                try {
+                    const data = await getJSON(`/thread/${tweetId}`);
+                    if (data) {
+                        if (isStatus(data.status)) rootStatus = data.status;
+                        addPosts(data.thread);
+                        if (data.author) rootAuthor = data.author;
+                    }
+                } catch (e) { console.warn('Thread API failed:', e); }
+
+                // 2) status API도 가져와서 thread API가 놓친 원본 상태를 보강한다.
+                try {
+                    const data = await getJSON(`/status/${tweetId}`);
+                    if (data) {
+                        if (isStatus(data.status)) {
+                            rootStatus = rootStatus || data.status;
+                            addPosts([data.status]);
+                            rootAuthor = rootAuthor || data.status.author;
+                        }
+                        addPosts(data.thread);
+                    }
+                } catch (e) { console.warn('Status API failed:', e); }
+
+                // 3) conversation API를 여러 페이지 확인한다.
+                //    /thread가 일부만 반환하는 경우, 여기서 같은 작성자의 타래를 추가로 회수한다.
+                let conversationCursor = '';
+                const seenCursors = new Set();
+                const MAX_CONVERSATION_PAGES = 12;
+
+                for (let page = 0; page < MAX_CONVERSATION_PAGES; page++) {
+                    try {
+                        const query = conversationCursor
+                            ? `/conversation/${tweetId}?cursor=${encodeURIComponent(conversationCursor)}`
+                            : `/conversation/${tweetId}`;
+                        const data = await getJSON(query);
+                        if (!data) break;
+
+                        if (isStatus(data.status)) {
+                            rootStatus = rootStatus || data.status;
+                            addPosts([data.status]);
+                            rootAuthor = rootAuthor || data.status.author;
+                        }
+                        addPosts(data.thread);
+                        addPosts(data.replies);
+
+                        const nextCursor = data.cursor && data.cursor.bottom ? String(data.cursor.bottom) : '';
+                        if (!nextCursor || seenCursors.has(nextCursor) || nextCursor === conversationCursor) break;
+                        seenCursors.add(nextCursor);
+                        conversationCursor = nextCursor;
+                    } catch (e) {
+                        console.warn('Conversation API page failed:', e);
+                        break;
+                    }
+                }
+
+                // 아무 것도 못 가져왔다면 기존처럼 단일 게시물 오류로 처리한다.
+                if (!posts.size && !rootStatus) throw new Error('API_ERROR');
+
+                if (rootStatus) addPosts([rootStatus]);
+
+                // 기준 작성자를 결정한다. URL로 넣은 게시물의 작성자를 우선한다.
+                const requestedPost = posts.get(String(tweetId));
+                const author = (requestedPost && requestedPost.author) ||
+                               (rootStatus && rootStatus.author) ||
+                               rootAuthor || {};
+                const authorId = author.id ? String(author.id) : '';
+                const authorScreenName = (author.screen_name || author.username || '').toLowerCase();
+
+                // 같은 작성자의 게시물만 남긴다.
+                // conversation에는 다른 사람의 일반 답글도 섞일 수 있으므로 반드시 필터링한다.
+                let candidates = Array.from(posts.values()).filter(t => {
+                    const a = t.author || {};
+                    const idMatch = authorId && a.id ? String(a.id) === authorId : false;
+                    const nameMatch = authorScreenName && (a.screen_name || a.username || '').toLowerCase() === authorScreenName;
+                    return idMatch || nameMatch;
+                });
+
+                if (!candidates.length && requestedPost) candidates = [requestedPost];
+
+                // 게시물 간 연결관계를 이용해 '내가 이어 쓴 타래'를 우선한다.
+                // 연결 정보가 없는 오래된 응답은 시간순으로 보완한다.
+                candidates.sort((a, b) => {
+                    const ta = Number(a.created_timestamp || 0);
+                    const tb = Number(b.created_timestamp || 0);
+                    return ta - tb;
+                });
+
+                // ID 중복 제거 + 같은 텍스트 중복 제거
+                const seenIds = new Set();
+                const seenTexts = new Set();
+                candidates = candidates.filter(t => {
+                    const id = String(t.id);
+                    const text = String(t.text || '').trim();
+                    if (!text || seenIds.has(id) || seenTexts.has(text)) return false;
+                    seenIds.add(id);
+                    seenTexts.add(text);
+                    return true;
+                });
+
+                if (!candidates.length) throw new Error('NO_CONTENT');
+
+                const first = candidates[0];
+                const firstAuthor = first.author || author || {};
+
+                return {
+                    text: candidates.map(t => t.text).join('\n\n'),
+                    user_name: firstAuthor.name || firstAuthor.display_name || '알 수 없는 사용자',
+                    user_screen_name: firstAuthor.screen_name || firstAuthor.username || 'unknown',
+                    date_epoch: first.created_timestamp,
+                    tweetURL: first.url || urlStr
+                };
+            }
+
+            function getMetaHtml() {
+                return `
+                    <div class="flex flex-col items-center justify-center space-y-10 w-full mt-12">
+                        <div class="w-10 h-[1px] bg-book-border mx-auto"></div>
+                        <div class="text-center space-y-3 font-sans">
+                            <p class="text-[15px] font-bold tracking-wide text-book-accent">${currentMetaData.user_name}</p>
+                            <p class="text-[13px] text-book-muted tracking-wider">@${currentMetaData.user_screen_name}</p>
+                            <p class="text-[12px] text-book-muted/70 tracking-widest mt-2">${formatDate(currentMetaData.date_epoch)}</p>
+                        </div>
+                        <a href="${currentOriginalUrl}" target="_blank" rel="noopener noreferrer" 
+                            class="mt-8 flex items-center justify-center gap-2 px-6 py-3 border border-book-border rounded-full text-sm font-sans text-book-muted hover:bg-book-border/30 transition-colors group">
+                            <i class="ph ph-arrow-square-out text-lg group-hover:text-book-accent transition-colors"></i>
+                            <span class="tracking-widest group-hover:text-book-accent transition-colors">원문 보기</span>
+                        </a>
+                        <div class="w-10 h-[1px] bg-book-border mx-auto mt-4"></div>
+                    </div>
+                `;
+            }
+
+            function renderPage(index) {
+                if (index < 0 || index > currentPages.length) return;
+                viewPage.style.opacity = 0;
+                setTimeout(() => {
+                    if (index === currentPages.length) pageText.innerHTML = getMetaHtml();
+                    else pageText.innerHTML = currentPages[index].replace(/\n/g, '<br>');
+                    const totalScreens = currentPages.length + 1;
+                    pageIndicator.textContent = `${index + 1} / ${totalScreens}`;
+                    btnPrev.disabled = index === 0;
+                    btnNext.disabled = index === currentPages.length;
+                    viewPage.style.opacity = 1;
+                    isAnimating = false;
+                }, 200);
+            }
+
+            function renderScroll() {
+                scrollText.innerHTML = currentRawText.replace(/\n/g, '<br>');
+                scrollMeta.innerHTML = getMetaHtml();
+                viewScroll.scrollTop = 0;
+            }
+
+            function handlePageTurn(direction) {
+                if (activeViewMode !== 'page' || isAnimating) return;
+                const newIndex = currentPageIndex + direction;
+                const totalScreens = currentPages.length + 1;
+                if (newIndex >= 0 && newIndex < totalScreens) {
+                    isAnimating = true;
+                    currentPageIndex = newIndex;
+                    renderPage(currentPageIndex);
+                    if(!swipeHint.classList.contains('opacity-0')) swipeHint.classList.replace('opacity-40', 'opacity-0');
+                }
+            }
+
+            function applyTheme(theme) {
+                activeTheme = theme;
+                document.documentElement.setAttribute('data-theme', theme);
+                localStorage.setItem('theme', theme);
+                themeBtns.forEach(btn => {
+                    if(btn.dataset.value === theme) {
+                        btn.classList.add('ring-2', 'ring-offset-2', 'ring-book-accent', 'scale-105');
+                        btn.classList.remove('opacity-70');
+                    } else {
+                        btn.classList.remove('ring-2', 'ring-offset-2', 'ring-book-accent', 'scale-105');
+                        btn.classList.add('opacity-70');
+                    }
+                });
+            }
+            
+            // 본문 글꼴 적용 함수 추가
+            function applyAppFont(font) {
+                activeAppFont = font;
+                localStorage.setItem('appFont', font);
+
+                const targetElements = [document.getElementById('page-text'), document.getElementById('scroll-text')];
+                
+                targetElements.forEach(el => {
+                    if(!el) return;
+                    el.classList.remove('font-serif', 'font-myeongjo', 'font-sans', 'font-bold', 'font-normal');
+                    if (font === 'gothic') el.classList.add('font-sans', 'font-normal');
+                    else if (font === 'batang') el.classList.add('font-serif', 'font-normal');
+                    else if (font === 'myeongjo') el.classList.add('font-myeongjo', 'font-normal');
+                    else if (font === 'bold-gothic') el.classList.add('font-sans', 'font-bold');
+                });
+
+                appFontBtns.forEach(btn => {
+                    if(btn.dataset.value === font) {
+                        btn.classList.add('bg-book-accent', 'text-book-bg');
+                        btn.classList.remove('text-book-muted');
+                    } else {
+                        btn.classList.remove('bg-book-accent', 'text-book-bg');
+                        btn.classList.add('text-book-muted');
+                    }
+                });
+            }
+
+            function applyViewMode(mode) {
+                activeViewMode = mode;
+                localStorage.setItem('viewMode', mode);
+                viewBtns.forEach(btn => {
+                    if(btn.dataset.value === mode) {
+                        btn.classList.add('bg-book-accent', 'text-book-bg');
+                        btn.classList.remove('text-book-muted');
+                    } else {
+                        btn.classList.remove('bg-book-accent', 'text-book-bg');
+                        btn.classList.add('text-book-muted');
+                    }
+                });
+                if(currentRawText) {
+                    if (mode === 'scroll') {
+                        viewPage.classList.add('hidden');
+                        footerPagination.classList.add('hidden');
+                        swipeHint.classList.add('hidden');
+                        viewScroll.classList.remove('hidden');
+                        renderScroll();
+                    } else {
+                        viewScroll.classList.add('hidden');
+                        viewPage.classList.remove('hidden');
+                        footerPagination.classList.remove('hidden');
+                        swipeHint.classList.remove('hidden');
+                        renderPage(currentPageIndex);
+                    }
+                }
+            }
+
+            btnsOpenSettings.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    settingsModal.classList.remove('hidden');
+                    void settingsModal.offsetWidth;
+                    settingsModal.classList.remove('fade-out');
+                    settingsModal.classList.add('fade-in');
+                });
+            });
+
+            btnCloseSettings.addEventListener('click', () => {
+                settingsModal.classList.remove('fade-in');
+                settingsModal.classList.add('fade-out');
+                setTimeout(() => settingsModal.classList.add('hidden'), 400);
+            });
+
+            settingsModal.addEventListener('click', (e) => { if(e.target === settingsModal) btnCloseSettings.click(); });
+            themeBtns.forEach(btn => { btn.addEventListener('click', () => applyTheme(btn.dataset.value)); });
+            viewBtns.forEach(btn => { btn.addEventListener('click', () => applyViewMode(btn.dataset.value)); });
+            
+            // 글꼴 버튼 클릭 이벤트 추가
+            appFontBtns.forEach(btn => { btn.addEventListener('click', () => applyAppFont(btn.dataset.value)); });
+
+            btnSubmit.addEventListener('click', async () => {
+                const url = urlInput.value.trim();
+                if (!url) { showToast("X(트위터) 링크를 입력해주세요."); return; }
+
+                btnText.textContent = "가져오는 중...";
+                btnSpinner.classList.remove('hidden');
+                btnSubmit.disabled = true;
+
+                try {
+                    const data = await fetchTwitterData(url);
+                    if (!data || !data.text) throw new Error("NO_CONTENT");
+
+                    currentOriginalUrl = data.tweetURL || url;
+                    currentRawText = data.text;
+                    currentMetaData = { user_name: data.user_name || '알 수 없는 사용자', user_screen_name: data.user_screen_name || 'unknown', date_epoch: data.date_epoch };
+                    
+                    bookTitle.textContent = `${data.user_name}의 글`;
+                    currentPages = paginateText(data.text);
+                    if (currentPages.length === 0) currentPages = ["(내용이 없습니다)"];
+                    
+                    currentPageIndex = 0;
+                    applyViewMode(activeViewMode);
+                    switchScreen(screens.home, screens.book);
+                    
+                    if(activeViewMode === 'page') {
+                        swipeHint.classList.replace('opacity-0', 'opacity-40');
+                        setTimeout(() => swipeHint.classList.replace('opacity-40', 'opacity-0'), 4000);
+                    }
+                } catch (error) {
+                    if (error.message === 'NOT_TWITTER') showToast("X(트위터) 링크만 지원합니다.");
+                    else if (error.message === 'INVALID_URL' || error.message === 'INVALID_X_LINK') showToast("X 게시물 링크 형식을 확인해주세요.");
+                    else if (error.message === 'NO_CONTENT') showToast("이 게시물의 내용을 가져올 수 없습니다.");
+                    else showToast("X에서 글을 가져오지 못했습니다. 잠시 후 다시 시도해주세요.");
+                } finally {
+                    btnText.innerHTML = "책 열기 &rarr;";
+                    btnSpinner.classList.add('hidden');
+                    btnSubmit.disabled = false;
+                }
+            });
+
+            btnBack.addEventListener('click', () => {
+                switchScreen(screens.book, screens.home);
+                window.getSelection().removeAllRanges(); 
+            });
+            
+            btnPrev.addEventListener('click', (e) => { e.stopPropagation(); handlePageTurn(-1); });
+            btnNext.addEventListener('click', (e) => { e.stopPropagation(); handlePageTurn(1); });
+
+            viewPage.addEventListener('click', (e) => {
+                if(window.getSelection().toString().trim().length > 0) return;
+                if (activeViewMode !== 'page' || isAnimating) return;
+                const rect = viewPage.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                if (clickX < rect.width * 0.35) handlePageTurn(-1);
+                else if (clickX > rect.width * 0.65) handlePageTurn(1);
+            });
+            
+            urlInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') btnSubmit.click(); });
+        });
+    </script>
+</body>
+</html>
